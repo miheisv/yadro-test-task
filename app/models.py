@@ -1,6 +1,6 @@
-from sqlalchemy import Column, String, ForeignKey, Integer, UniqueConstraint
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
 
 Base = declarative_base()
 
@@ -9,8 +9,12 @@ class GraphModel(Base):
     __tablename__ = "graphs"
 
     id = Column(Integer, primary_key=True)
-    nodes = relationship("NodeModel", back_populates="graph", cascade="all, delete-orphan")
-    edges = relationship("EdgeModel", back_populates="graph", cascade="all, delete-orphan")
+    nodes = relationship(
+        "NodeModel", back_populates="graph", cascade="all, delete-orphan"
+    )
+    edges = relationship(
+        "EdgeModel", back_populates="graph", cascade="all, delete-orphan"
+    )
 
 
 class NodeModel(Base):
@@ -36,4 +40,11 @@ class EdgeModel(Base):
     source = relationship("NodeModel", foreign_keys=[source_id])
     target = relationship("NodeModel", foreign_keys=[target_id])
 
-    __table_args__ = (UniqueConstraint("graph_id", "source_id", "target_id"),)
+    __table_args__ = (
+        UniqueConstraint("graph_id", "source_id", "target_id"),
+        UniqueConstraint(
+            "graph_id",
+            "target_id",
+            "source_id",
+        ),
+    )

@@ -1,12 +1,13 @@
 import os
 from contextlib import contextmanager
 
-from fastapi import HTTPException, Response
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.exc import DataError, IntegrityError
 
-from app.models import EdgeModel, GraphModel, NodeModel
-from app.schemas import (
+from models import EdgeModel, GraphModel, NodeModel, Base
+from schemas import (
     AdjacencyListResponse,
     ErrorResponse,
     GraphCreate,
@@ -16,15 +17,17 @@ from app.schemas import (
     ValidationError,
 )
 
-USER = os.environ.get("DB_USER", "postgres")
-PASSWORD = os.environ.get("DB_PASSWORD", "postgres")
+USER = os.environ.get("POSTGRES_USER", "postgres")
+PASSWORD = os.environ.get("POSTGRES_PASSWORD", "postgres")
 HOST = os.environ.get("DB_HOST", "localhost")
-SQLALCHEMY_DATABASE_URL = f"postgresql://{USER}:{PASSWORD}@{HOST}/postgres"
+PORT = os.environ.get("DB_PORT", "5432")
+SQLALCHEMY_DATABASE_URL = f"postgresql://{USER}:{PASSWORD}@{HOST}:{PORT}/postgres"
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+Base.metadata.create_all(bind=engine)
 
 @contextmanager
 def get_db():
@@ -39,10 +42,10 @@ def is_acyclic(nodes: list[str], edges: list[tuple[str, str]]):
     graph = {}
 
     for node in nodes:
-        graph[node.name] = []
+        graph[node] = []
 
     for edge in edges:
-        graph[edge.source].append(edge.target)
+        graph.get(edge[0], []).append(edge[1])
 
     visited = set()
     visiting = set()
@@ -54,7 +57,7 @@ def is_acyclic(nodes: list[str], edges: list[tuple[str, str]]):
             return True
 
         visiting.add(node)
-        for neighbor in graph[node]:
+        for neighbor in graph.get(node, []):
             if not dfs(neighbor):
                 return False
         visiting.remove(node)
@@ -70,9 +73,9 @@ def is_acyclic(nodes: list[str], edges: list[tuple[str, str]]):
 
 
 def validate_data(data: GraphCreate):
-    errors = HTTPValidationError()
+    errors = HTTPValidationError(detail=[])
     if len(data.nodes) == 0:
-        errors.append(
+        errors.detail.append(
             ValidationError(
                 loc=["body", "nodes"],
                 msg="There aren't any vertex!",
@@ -81,7 +84,7 @@ def validate_data(data: GraphCreate):
         )
 
     if any(not node.name.isalpha() for node in data.nodes):
-        errors.append(
+        errors.detail.append(
             ValidationError(
                 loc=["body", "nodes"],
                 msg="There are nodes with incorrect names!",
@@ -90,7 +93,7 @@ def validate_data(data: GraphCreate):
         )
 
     if any(len(node.name) > 255 for node in data.nodes):
-        errors.append(
+        errors.detail.append(
             ValidationError(
                 loc=["body", "nodes"],
                 msg="There are nodes with too long names",
@@ -100,7 +103,7 @@ def validate_data(data: GraphCreate):
 
     node_names = [node.name for node in data.nodes]
     if len(node_names) != len(set(node_names)):
-        errors.append(
+        errors.detail.append(
             ValidationError(
                 loc=["body", "nodes"],
                 msg="There are vertex with the same name!",
@@ -108,47 +111,38 @@ def validate_data(data: GraphCreate):
             )
         )
 
-    seen_edges = set()
-    for edge in data.edges:
-        if edge.source not in node_names or edge.target not in node_names:
-            errors.append(
-                ValidationError(
-                    loc=["body", "edges"],
-                    msg=f"Edge contains unknown nodes: {edge.source} -> {edge.target}",
-                    type="value_error",
-                )
+    if set([edge.source for edge in data.edges] + [edge.target for edge in data.edges]) - set(node_names):
+        errors.detail.append(
+            ValidationError(
+                loc=["body", "nodes"],
+                msg="There are incorrect edges!",
+                type="value_error",
             )
-        if (edge.source, edge.target) in seen_edges:
-            errors.append(
-                ValidationError(
-                    loc=["body", "edges"],
-                    msg=f"Duplicate edge: {edge.source} -> {edge.target}",
-                    type="value_error.duplicate",
-                )
-            )
-        if (edge.target, edge.source) in seen_edges:
-            errors.append(
-                ValidationError(
-                    loc=["body", "edges"],
-                    msg=f"Duplicate reverse edge: {edge.target} -> {edge.source}",
-                    type="value_error.duplicate",
-                )
-            )
-        seen_edges.add((edge.source, edge.target))
+        )
 
-    if is_acyclic(
+    if not is_acyclic(
         [node.name for node in data.nodes],
         [(edge.source, edge.target) for edge in data.edges],
     ):
-        errors.append(
+        errors.detail.append(
             ValidationError(
                 loc=["body", "edges"],
                 msg="There is a cycle in graph!",
                 type="value_error.cycle",
             )
         )
-    if errors:
-        raise HTTPException(status_code=422, detail=errors)
+    if errors.detail:
+        raise HTTPException(
+            status_code=422,
+            detail=[
+                {
+                    "loc": d.loc,
+                    "msg": d.msg,
+                    "type": d.type
+                }
+                for d in errors.detail
+            ]
+        )    
     return None
 
 
@@ -178,58 +172,83 @@ def create_graph(data: GraphCreate):
             db.commit()
             db.refresh(graph)
             return GraphCreateResponse(id=graph.id)
+
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=400,
+                detail="Duplicate node or edge constraint violated"
+            ) from exc
+
+        except DataError as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=400,
+                detail="One or more node names exceed maximum length of 255"
+            ) from exc
+        
         except Exception as exc:
             db.rollback()
             raise HTTPException(
-                status_code=400, detail=ErrorResponse(msg="Failed to add graph")
+                status_code=400, detail="Failed to add graph"
             ) from exc
 
 
-def get_graph(graph_id: int):
-    with get_db() as db:
-        return db.query(GraphModel).filter(GraphModel.graph_id == graph_id).first()
-
-
 def graph_as_lists(graph_id: int):
-    graph = get_graph(graph_id)
-    if not graph:
-        raise HTTPException(status_code=404, detail="Graph entity not found")
-    return GraphReadResponse(
-        id=graph_id,
-        nodes=[{"name": node.name} for node in graph.nodes],
-        edges=[
-            {"source": edge.source.name, "target": edge.target.name}
-            for edge in graph.edges
-        ],
-    )
+    with get_db() as db:
+        try:
+            graph = db.query(GraphModel).filter(GraphModel.id == graph_id).first()
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail="Graph entity not found") from exc
+        if not graph:
+            raise HTTPException(404, "Graph not found")
+        return GraphReadResponse(
+            id=graph_id,
+            nodes=[{"name": node.name} for node in graph.nodes],
+            edges=[
+                {"source": edge.source.name, "target": edge.target.name}
+                for edge in graph.edges
+            ],
+        )
 
 
 def graph_as_adj(graph_id: int):
-    graph = get_graph(graph_id)
-    if not graph:
-        raise HTTPException(status_code=404, detail="Graph entity not found")
-    adj = {node.name: [] for node in graph.nodes}
-    for edge in graph.edges:
-        adj[edge.source.name].append(edge.target.name)
-    return AdjacencyListResponse(adjacency_list=adj)
+    with get_db() as db:
+        try:
+            graph = db.query(GraphModel).filter(GraphModel.id == graph_id).first()
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail="Graph entity not found") from exc
+        if not graph:
+            raise HTTPException(404, "Graph not found")
+        adj = {node.name: [] for node in graph.nodes}
+        for edge in graph.edges:
+            adj[edge.source.name].append(edge.target.name)
+        return AdjacencyListResponse(adjacency_list=adj)
 
 
 def graph_as_reverse_adj(graph_id: int):
-    graph = get_graph(graph_id)
-    if not graph:
-        raise HTTPException(status_code=404, detail="Graph entity not found")
-    reverse_adj = {node.name: [] for node in graph.nodes}
-    for edge in graph.edges:
-        reverse_adj[edge.target.name].append(edge.source.name)
-    return AdjacencyListResponse(adjacency_list=reverse_adj)
+    with get_db() as db:
+        try:
+            graph = db.query(GraphModel).filter(GraphModel.id == graph_id).first()
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail="Graph entity not found") from exc
+        if not graph:
+            raise HTTPException(404, "Graph not found")
+        reverse_adj = {node.name: [] for node in graph.nodes}
+        for edge in graph.edges:
+            reverse_adj[edge.target.name].append(edge.source.name)
+        return AdjacencyListResponse(adjacency_list=reverse_adj)
 
 
 def delete_node_by_name(graph_id: int, node_name: str):
-    graph = get_graph(graph_id)
-    if not graph:
-        raise HTTPException(status_code=404, detail="Graph entity not found")
-
     with get_db() as db:
+        try:
+            graph = db.query(GraphModel).filter(GraphModel.id == graph_id).first()
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail="Graph entity not found") from exc
+        if not graph:
+            raise HTTPException(404, "Graph not found")
+
         node = db.query(NodeModel).filter_by(graph_id=graph_id, name=node_name).first()
         if not node:
             raise HTTPException(status_code=404, detail="Node entity not found")

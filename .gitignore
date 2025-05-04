@@ -3,3 +3,4 @@ task.md
 .venv
 env/
 venv/
+__pycache__
