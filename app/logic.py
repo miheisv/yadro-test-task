@@ -1,7 +1,7 @@
 import os
 from contextlib import contextmanager
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -12,6 +12,8 @@ from app.schemas import (
     GraphCreateResponse,
     HTTPValidationError,
     ValidationError,
+    GraphReadResponse,
+    AdjacencyListResponse,
 )
 
 USER = os.environ.get("DB_USER", "postgres")
@@ -181,3 +183,36 @@ def create_graph(data: GraphCreate):
             raise HTTPException(
                 status_code=400, detail=ErrorResponse(msg="Failed to add graph")
             ) from exc
+
+
+def get_graph(graph_id: int):
+    with get_db() as db:
+        return db.query(GraphModel).filter(GraphModel.graph_id == graph_id).first()
+
+
+def graph_as_lists(graph_id: int):
+    graph = get_graph(graph_id)
+    if not graph:
+        raise HTTPException(status_code=404, detail="Graph entity not found")
+    return GraphReadResponse(id=graph_id, nodes=[{"name": node.name} for node in graph.nodes],
+                             edges = [{"source": edge.source.name, "target": edge.target.name} for edge in graph.edges])
+
+
+def graph_as_adj(graph_id: int):
+    graph = get_graph(graph_id)
+    if not graph:
+        raise HTTPException(status_code=404, detail="Graph entity not found")
+    adj = {node.name: [] for node in graph.nodes}
+    for edge in graph.edges:
+        adj[edge.source.name].append(edge.target.name)
+    return AdjacencyListResponse(adjacency_list=adj)
+
+
+def graph_as_reverse_adj(graph_id: int):
+    graph = get_graph(graph_id)
+    if not graph:
+        raise HTTPException(status_code=404, detail="Graph entity not found")
+    reverse_adj = {node.name: [] for node in graph.nodes}
+    for edge in graph.edges:
+        reverse_adj[edge.target.name].append(edge.source.name)
+    return AdjacencyListResponse(adjacency_list=reverse_adj)
