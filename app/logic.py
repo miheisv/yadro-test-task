@@ -7,13 +7,13 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models import EdgeModel, GraphModel, NodeModel
 from app.schemas import (
+    AdjacencyListResponse,
     ErrorResponse,
     GraphCreate,
     GraphCreateResponse,
+    GraphReadResponse,
     HTTPValidationError,
     ValidationError,
-    GraphReadResponse,
-    AdjacencyListResponse,
 )
 
 USER = os.environ.get("DB_USER", "postgres")
@@ -194,8 +194,14 @@ def graph_as_lists(graph_id: int):
     graph = get_graph(graph_id)
     if not graph:
         raise HTTPException(status_code=404, detail="Graph entity not found")
-    return GraphReadResponse(id=graph_id, nodes=[{"name": node.name} for node in graph.nodes],
-                             edges = [{"source": edge.source.name, "target": edge.target.name} for edge in graph.edges])
+    return GraphReadResponse(
+        id=graph_id,
+        nodes=[{"name": node.name} for node in graph.nodes],
+        edges=[
+            {"source": edge.source.name, "target": edge.target.name}
+            for edge in graph.edges
+        ],
+    )
 
 
 def graph_as_adj(graph_id: int):
@@ -216,3 +222,23 @@ def graph_as_reverse_adj(graph_id: int):
     for edge in graph.edges:
         reverse_adj[edge.target.name].append(edge.source.name)
     return AdjacencyListResponse(adjacency_list=reverse_adj)
+
+
+def delete_node_by_name(graph_id: int, node_name: str):
+    graph = get_graph(graph_id)
+    if not graph:
+        raise HTTPException(status_code=404, detail="Graph entity not found")
+
+    with get_db() as db:
+        node = db.query(NodeModel).filter_by(graph_id=graph_id, name=node_name).first()
+        if not node:
+            raise HTTPException(status_code=404, detail="Node entity not found")
+
+        db.query(EdgeModel).filter(
+            (EdgeModel.source_id == node.id) | (EdgeModel.target_id == node.id)
+        ).delete(synchronize_session=False)
+
+        db.delete(node)
+        db.commit()
+
+        return None
