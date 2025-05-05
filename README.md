@@ -33,7 +33,6 @@
 | POSTGRES\_PASSWORD | `postgres`                 | Пароль БД           |
 | DB\_HOST           | `localhost`                | Адрес сервера БД    |
 | DB\_PORT           | `5432`                     | Порт сервера БД     |
-| DB\_PATH           | `/var/lib/postgresql/data` | Путь к хранилищу БД |
 
 ### Установка
 
