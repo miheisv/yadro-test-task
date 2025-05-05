@@ -1,12 +1,12 @@
 import fastapi
-from logic import (
+from app.logic import (
     create_graph,
     delete_node_by_name,
     graph_as_adj,
     graph_as_lists,
     graph_as_reverse_adj,
 )
-from schemas import (
+from app.schemas import (
     AdjacencyListResponse,
     ErrorResponse,
     GraphCreate,
@@ -125,6 +125,7 @@ def get_graph_as_reverse_adj(graph_id: int) -> (AdjacencyListResponse|ErrorRespo
 @app.delete(
     "/api/graph/{graph_id}/node/{node_name}",
     status_code=204,
+    response_model=None,
     operation_id="delete_node_api_graph__graph_id__node__node_name__delete",
     responses={404: {"model": ErrorResponse}, 422: {"model": HTTPValidationError}},
 )

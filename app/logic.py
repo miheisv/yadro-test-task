@@ -4,12 +4,11 @@ from contextlib import contextmanager
 from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.exc import DataError, IntegrityError
+from sqlalchemy.exc import IntegrityError
 
-from models import EdgeModel, GraphModel, NodeModel, Base
-from schemas import (
+from app.models import EdgeModel, GraphModel, NodeModel, Base
+from app.schemas import (
     AdjacencyListResponse,
-    ErrorResponse,
     GraphCreate,
     GraphCreateResponse,
     GraphReadResponse,
@@ -17,13 +16,15 @@ from schemas import (
     ValidationError,
 )
 
-USER = os.environ.get("POSTGRES_USER", "postgres")
-PASSWORD = os.environ.get("POSTGRES_PASSWORD", "postgres")
-HOST = os.environ.get("DB_HOST", "localhost")
-PORT = os.environ.get("DB_PORT", "5432")
-SQLALCHEMY_DATABASE_URL = f"postgresql://{USER}:{PASSWORD}@{HOST}:{PORT}/postgres"
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    f"postgresql://{os.environ.get('POSTGRES_USER','postgres')}:"
+    f"{os.environ.get('POSTGRES_PASSWORD','postgres')}@"
+    f"{os.environ.get('DB_HOST','localhost')}:"
+    f"{os.environ.get('DB_PORT','5432')}/postgres"
+)
 
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
+engine = create_engine(DATABASE_URL)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -128,7 +129,7 @@ def validate_data(data: GraphCreate) -> None:
         errors.detail.append(
             ValidationError(
                 loc=["body", "nodes"],
-                msg="There are nodes with too long names",
+                msg="There are nodes with too long names!",
                 type="value_error",
             )
         )
@@ -218,13 +219,6 @@ def create_graph(data: GraphCreate) -> GraphCreateResponse:
             db.commit()
             db.refresh(graph)
             return GraphCreateResponse(id=graph.id)
-
-        except IntegrityError as exc:
-            db.rollback()
-            raise HTTPException(
-                status_code=400,
-                detail="Duplicate node or edge constraint violated"
-            ) from exc
 
         except Exception as exc:
             db.rollback()

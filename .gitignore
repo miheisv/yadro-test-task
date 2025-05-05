@@ -4,3 +4,6 @@ task.md
 env/
 venv/
 __pycache__
+.pytest_cache
+.coverage
+sqlite
