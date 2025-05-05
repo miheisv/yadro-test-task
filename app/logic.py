@@ -31,6 +31,14 @@ Base.metadata.create_all(bind=engine)
 
 @contextmanager
 def get_db():
+    """
+    Provide a database session.
+
+    Yields:
+        Session: SQLAlchemy Session object.
+
+    Guarantuee the session will be closed after use.
+    """
     db = SessionLocal()
     try:
         yield db
@@ -38,7 +46,17 @@ def get_db():
         db.close()
 
 
-def is_acyclic(nodes: list[str], edges: list[tuple[str, str]]):
+def is_acyclic(nodes: list[str], edges: list[tuple[str, str]]) -> bool:
+    """
+    Check directed graph is acyclic.
+
+    Args:
+        nodes(List[str]): list of node names.
+        edges(List[Tuple[str, str]]): list of (source, target) pairs.
+
+    Returns:
+        bool: True if no cycle exists, False otherwise.
+    """
     graph = {}
 
     for node in nodes:
@@ -72,7 +90,21 @@ def is_acyclic(nodes: list[str], edges: list[tuple[str, str]]):
     return True
 
 
-def validate_data(data: GraphCreate):
+def validate_data(data: GraphCreate) -> None:
+    """
+    Validate graph creation data.
+
+    Args:
+        data (GraphCreate): input data with nodes and edges.
+
+    Raises:
+        HTTPException(422):
+            - if no nodes in graph.
+            - if node names are non-alphabetic or too long(>255).
+            - if duplicate node names exist.
+            - if any edge contains unknown nodes.
+            - if the graph contains a cycle.
+    """
     errors = HTTPValidationError(detail=[])
     if len(data.nodes) == 0:
         errors.detail.append(
@@ -146,7 +178,21 @@ def validate_data(data: GraphCreate):
     return None
 
 
-def create_graph(data: GraphCreate):
+def create_graph(data: GraphCreate) -> GraphCreateResponse:
+    """
+    Create a new graph.
+
+    Args:
+        data (GraphCreate): input data with nodes and edges.
+
+    Returns:
+        GraphCreateResponse: contains the created graph's ID.
+
+    Raises:
+        HTTPException(400):
+            - if edges contains duplicates.
+            - if general failure to add graph.
+    """
     validate_data(data)
 
     with get_db() as db:
@@ -180,13 +226,6 @@ def create_graph(data: GraphCreate):
                 detail="Duplicate node or edge constraint violated"
             ) from exc
 
-        except DataError as exc:
-            db.rollback()
-            raise HTTPException(
-                status_code=400,
-                detail="One or more node names exceed maximum length of 255"
-            ) from exc
-        
         except Exception as exc:
             db.rollback()
             raise HTTPException(
@@ -194,7 +233,19 @@ def create_graph(data: GraphCreate):
             ) from exc
 
 
-def graph_as_lists(graph_id: int):
+def graph_as_lists(graph_id: int) -> GraphReadResponse:
+    """
+    Represent a graph as lists of nodes and edges.
+
+    Args:
+        graph_id (int): the identifier of the graph to represent.
+
+    Returns:
+        GraphReadResponse: contains node and edge lists.
+
+    Raises:
+        HTTPException(404): if the graph is not found.
+    """
     with get_db() as db:
         try:
             graph = db.query(GraphModel).filter(GraphModel.id == graph_id).first()
@@ -212,7 +263,19 @@ def graph_as_lists(graph_id: int):
         )
 
 
-def graph_as_adj(graph_id: int):
+def graph_as_adj(graph_id: int) -> AdjacencyListResponse:
+    """
+    Represent a graph as an adjacency list.
+
+    Args:
+        graph_id (int): the identifier of the graph to represent.
+
+    Returns:
+        AdjacencyListResponse: dict where keys are node names, values are lists of neighbor's names.
+
+    Raises:
+        HTTPException(404): if the graph is not found.
+    """
     with get_db() as db:
         try:
             graph = db.query(GraphModel).filter(GraphModel.id == graph_id).first()
@@ -226,7 +289,19 @@ def graph_as_adj(graph_id: int):
         return AdjacencyListResponse(adjacency_list=adj)
 
 
-def graph_as_reverse_adj(graph_id: int):
+def graph_as_reverse_adj(graph_id: int) -> AdjacencyListResponse:
+    """
+    Represent a graph as a reverse adjacency list.
+
+    Args:
+        graph_id (int): the identifier of the graph to represent.
+
+    Returns:
+        AdjacencyListResponse: dict where keys are node names, values are lists of neighbor's names.
+
+    Raises:
+        HTTPException(404): if the graph is not found.
+    """
     with get_db() as db:
         try:
             graph = db.query(GraphModel).filter(GraphModel.id == graph_id).first()
@@ -240,7 +315,19 @@ def graph_as_reverse_adj(graph_id: int):
         return AdjacencyListResponse(adjacency_list=reverse_adj)
 
 
-def delete_node_by_name(graph_id: int, node_name: str):
+def delete_node_by_name(graph_id: int, node_name: str) -> None:
+    """
+    Delete a node and its connected edges from the graph.
+
+    Args:
+        graph_id (int): the identifier of the graph.
+        node_name (str): name of the node to delete.
+
+    Raises:
+        HTTPException(404):
+            - if the graph is not found.
+            - if the node is not found.
+    """
     with get_db() as db:
         try:
             graph = db.query(GraphModel).filter(GraphModel.id == graph_id).first()
