@@ -6,7 +6,7 @@ services:
     env_file:
       - ./app/.env
     volumes:
-      - postgres_data:${DB_PATH}
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -14,6 +14,7 @@ services:
       retries: 10
     networks:
       - yadro_network
+
   backend:
     build: ./
     env_file:
