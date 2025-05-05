@@ -1,0 +1,9 @@
+task.md
+.env
+.venv
+env/
+venv/
+__pycache__
+.pytest_cache
+.coverage
+sqlite
